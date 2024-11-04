@@ -104,7 +104,7 @@ def browse_file():
         card_file_entry.insert(0, filename)
 
 def browse_folder():
-    foldername = filedialog.askdirectory(title="Select Output Folder")
+    foldername = filedialog.askdirectory(title="Select Output Folder", initialdir=os.path.join(os.path.expanduser("~"), "Downloads"))
     if foldername:
         output_folder_entry.delete(0, tk.END)
         output_folder_entry.insert(0, foldername)
@@ -112,14 +112,22 @@ def browse_folder():
 def run_program():
     card_file = card_file_entry.get()
     output_folder = output_folder_entry.get()
-    if card_file and output_folder:
+    if not output_folder:  # If no output folder is provided, use Downloads
+        output_folder = os.path.join(os.path.expanduser("~"), "Downloads")
+        output_folder_entry.insert(0, output_folder)
+    if card_file:
         main(card_file, output_folder)
     else:
-        messagebox.showwarning("Input Error", "Please provide both the card file and output folder.")
+        messagebox.showwarning("Input Error", "Please provide the card file.")
 
 # Create the main window
 root = tk.Tk()
 root.title("MTG Card Proxy Generator")
+
+# Set default output folder to Downloads
+default_output_folder = os.path.join(os.path.expanduser("~"), "Downloads")
+output_folder_entry = tk.Entry(root, width=50)
+output_folder_entry.insert(0, default_output_folder)
 
 # Create UI components
 tk.Label(root, text="Card File:").grid(row=0, column=0, padx=10, pady=10)
@@ -128,7 +136,6 @@ card_file_entry.grid(row=0, column=1, padx=10, pady=10)
 tk.Button(root, text="Browse", command=browse_file).grid(row=0, column=2, padx=10, pady=10)
 
 tk.Label(root, text="Output Folder:").grid(row=1, column=0, padx=10, pady=10)
-output_folder_entry = tk.Entry(root, width=50)
 output_folder_entry.grid(row=1, column=1, padx=10, pady=10)
 tk.Button(root, text="Browse", command=browse_folder).grid(row=1, column=2, padx=10, pady=10)
 

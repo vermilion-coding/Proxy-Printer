@@ -1,10 +1,11 @@
 import os
 import requests
-from PIL import Image
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 import tkinter as tk
 from tkinter import filedialog, messagebox
+from io import BytesIO
+from PIL import Image
 
 # Function to fetch card image URL using Scryfall API
 def get_card_image(card_name):
@@ -17,42 +18,50 @@ def get_card_image(card_name):
             return card_data['image_uris']['normal']
     return None
 
-# Function to download an image and save it locally
-def download_image(image_url, save_path):
+# Function to download an image and return as bytes
+def download_image(image_url):
     response = requests.get(image_url)
     if response.status_code == 200:
-        with open(save_path, 'wb') as f:
-            f.write(response.content)
-        return True
-    return False
+        return BytesIO(response.content)  # Return image content as a BytesIO object
+    return None
 
 # Function to create a PDF with images in a 3x3 layout
 def create_pdf(card_images, output_pdf_path):
     c = canvas.Canvas(output_pdf_path, pagesize=letter)
     width, height = letter
     
-    x_offset = 50
-    y_offset = height - 50
-    img_width = (width - 100) / 3
-    img_height = (height - 100) / 3
-    
-    for i, img_path in enumerate(card_images):
-        if i % 3 == 0 and i > 0:
-            y_offset -= img_height + 10
-            x_offset = 50
-            
-        if y_offset < 50:  # Move to the next page if the space is not enough
-            c.showPage()
-            y_offset = height - 50
-        
-        c.drawImage(img_path, x_offset, y_offset, width=img_width, height=img_height)
-        x_offset += img_width + 10
+    # Card dimensions in points
+    img_width = 180  # 2.5 inches
+    img_height = 252  # 3.5 inches
+    x_offset = (width - img_width * 3 - 20) / 2  # Centering horizontally
+    y_offset = height - 270  # Start closer to the top
 
+    for i, img_data in enumerate(card_images):
+        # Create an in-memory image and draw it
+        img = Image.open(img_data)
+        temp_filename = f"temp_{i}.png"  # Unique temp file name for each image
+        img.save(temp_filename)  # Save temporarily to draw
+        c.drawImage(temp_filename, x_offset + (i % 3) * (img_width + 10), y_offset, width=img_width, height=img_height)
+
+        # Move to the next column
+        if (i + 1) % 3 == 0:  # Every three images, move down for the next row
+            y_offset -= img_height  # Adjust the vertical offset for the next row
+
+            if y_offset < img_height - 270:  # Check if there's enough space for the next row
+                c.showPage()  # Start a new page
+                y_offset = height - 270  # Reset y_offset for new page
+
+    # Save the PDF after all images have been processed
     c.save()
+
+    # Clean up temporary files
+    for i in range(len(card_images)):
+        os.remove(f"temp_{i}.png")  # Remove each temporary file
 
 # Main function to execute the program
 def main(card_file, output_folder):
     card_images = []
+    unique_cards = {}  # Dictionary to avoid duplicate downloads
     
     with open(card_file, 'r') as f:
         lines = f.readlines()
@@ -66,12 +75,15 @@ def main(card_file, output_folder):
             image_url = get_card_image(card_name)
             
             if image_url:
-                for _ in range(count):
-                    img_path = os.path.join(output_folder, f"{card_name}.png")
-                    if download_image(image_url, img_path):
-                        card_images.append(img_path)
+                if card_name not in unique_cards:
+                    img_data = download_image(image_url)
+                    if img_data:
+                        unique_cards[card_name] = img_data  # Store the downloaded image data
                     else:
                         print(f"Failed to download image for {card_name}")
+                
+                # Add the image data multiple times based on the count
+                card_images.extend([unique_cards[card_name]] * count)
             else:
                 print(f"Card not found: {card_name}")
     

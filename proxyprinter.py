@@ -6,19 +6,20 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from io import BytesIO
 from PIL import Image
+import concurrent.futures  # For async image downloading
+import tempfile  # For creating temporary files
 
 # Function to fetch card image URL using Scryfall API
 def get_card_image(card_name):
     url = f"https://api.scryfall.com/cards/named?exact={card_name}"
     response = requests.get(url)
-    
     if response.status_code == 200:
         card_data = response.json()
         if 'image_uris' in card_data and 'normal' in card_data['image_uris']:
             return card_data['image_uris']['normal']
     return None
 
-# Function to download an image and return as bytes
+# Function to download an image and return as BytesIO object
 def download_image(image_url):
     response = requests.get(image_url)
     if response.status_code == 200:
@@ -29,7 +30,7 @@ def download_image(image_url):
 def create_pdf(card_images, output_pdf_path):
     c = canvas.Canvas(output_pdf_path, pagesize=letter)
     width, height = letter
-    
+
     # Card dimensions in points
     img_width = 180  # 2.5 inches
     img_height = 252  # 3.5 inches
@@ -37,11 +38,14 @@ def create_pdf(card_images, output_pdf_path):
     y_offset = height - 270  # Start closer to the top
 
     for i, img_data in enumerate(card_images):
-        # Create an in-memory image and draw it
-        img = Image.open(img_data)
-        temp_filename = f"temp_{i}.png"  # Unique temp file name for each image
-        img.save(temp_filename)  # Save temporarily to draw
-        c.drawImage(temp_filename, x_offset + (i % 3) * (img_width + 10), y_offset, width=img_width, height=img_height)
+        # Create a temporary file to save the image
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as temp_file:
+            temp_filename = temp_file.name
+            img = Image.open(img_data)
+            img.save(temp_filename)  # Save image to temp file
+            
+            # Draw the image from the temporary file path
+            c.drawImage(temp_filename, x_offset + (i % 3) * (img_width + 10), y_offset, width=img_width, height=img_height)
 
         # Move to the next column
         if (i + 1) % 3 == 0:  # Every three images, move down for the next row
@@ -54,25 +58,33 @@ def create_pdf(card_images, output_pdf_path):
     # Save the PDF after all images have been processed
     c.save()
 
-    # Clean up temporary files
-    for i in range(len(card_images)):
-        os.remove(f"temp_{i}.png")  # Remove each temporary file
-
 # Main function to execute the program
 def main(card_file, output_folder):
     card_images = []
     unique_cards = {}  # Dictionary to avoid duplicate downloads
-    
+    future_to_card = {}  # Mapping of future to card names
+
     with open(card_file, 'r') as f:
         lines = f.readlines()
-    
-    for line in lines:
-        parts = line.strip().split(' ', 1)
-        if len(parts) == 2:
-            count, card_name = parts
-            count = int(count)
-            print(f"Fetching image for: {card_name} (x{count})")
-            image_url = get_card_image(card_name)
+
+    # Download all card images asynchronously
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        for line in lines:
+            parts = line.strip().split(' ', 1)
+            if len(parts) == 2:
+                count, card_name = parts
+                count = int(count)
+                print(f"Fetching image for: {card_name} (x{count})")
+
+                if card_name not in unique_cards:
+                    # Submit the task to download the image
+                    future = executor.submit(get_card_image, card_name)
+                    future_to_card[future] = card_name
+
+        # After submitting all download tasks, collect results
+        for future in concurrent.futures.as_completed(future_to_card):
+            card_name = future_to_card[future]
+            image_url = future.result()
             
             if image_url:
                 if card_name not in unique_cards:
@@ -81,12 +93,11 @@ def main(card_file, output_folder):
                         unique_cards[card_name] = img_data  # Store the downloaded image data
                     else:
                         print(f"Failed to download image for {card_name}")
-                
                 # Add the image data multiple times based on the count
                 card_images.extend([unique_cards[card_name]] * count)
             else:
                 print(f"Card not found: {card_name}")
-    
+
     # Create the PDF if images were downloaded
     if card_images:
         output_pdf_path = os.path.join(output_folder, "mtg_cards.pdf")
